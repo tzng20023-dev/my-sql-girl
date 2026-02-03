@@ -1,128 +1,97 @@
 import streamlit as st
 from google import genai
-import edge_tts
-import asyncio
-import base64
+import pandas as pd
+import matplotlib.pyplot as plt
 import os
-import time
-from tenacity import retry, stop_after_attempt, wait_exponential
+import re
 
-# --- 1. 核心設定 ---
-st.set_page_config(page_title="SQL女孩 AIOps 終極任務版", layout="wide")
-client = genai.Client(api_key='AIzaSyALkBgNtgFO7hHep4RLooHepuIa77JwUAo')
+# --- 1. 核心初始化 ---
+st.set_page_config(page_title="SQL女孩 AIOps 戰情室", layout="wide")
 
-# --- 2. 語音輸出函數 ---
-def speak(text):
-    async def amain():
-        fn = f"v_{int(time.time())}.mp3"
-        comm = edge_tts.Communicate(text, "zh-TW-HsiaoChenNeural", rate="+15%", pitch="+5Hz")
-        await comm.save(fn)
-        return fn
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        fn = loop.run_until_complete(amain())
-        with open(fn, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-            st.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
-        os.remove(fn)
-    except: pass
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "task_index" not in st.session_state:
+    st.session_state.task_index = 0
 
-# --- 3. 視覺與背景樣式 ---
-st.markdown("""
-    <style>
-    .stApp { background: #fdf2f4; }
-    .heart-mask { 
-        width: 150px; height: 130px; margin: auto; 
-        clip-path: path('M75 22.5 C 75 22.5 60 0 30 0 C 10 0 0 22.5 0 52.5 C 0 90 75 150 75 150 C 75 150 150 90 150 52.5 C 150 22.5 135 0 120 0 C 90 0 75 22.5 75 22.5'); 
-        background-image: url("https://images.unsplash.com/photo-1524504388940-b1c1722653e1?q=80&w=1000"); 
-        background-size: cover; border: 3px solid #ff69b4; 
-    }
-    h2 { text-align: center; color: #ff69b4; }
-    .report-box { background: white; padding: 20px; border-radius: 15px; border-left: 10px solid #ff69b4; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); }
-    </style>
-    <div class="heart-mask"></div>
-    <h2>💖 SQL女孩：AIOps 終極任務分析 💖</h2>
-    """, unsafe_allow_html=True)
+# 金鑰直連
+MY_KEY = "AIzaSyAZL1uOs--OaWFTUs0jxR902J6VLMDoqo4"
+client = genai.Client(api_key=MY_KEY)
 
-# --- 4. 自動重試機制 ---
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def get_ai_response(prompt):
-    return client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+# --- 2. 介面佈局 ---
+st.markdown("<h1 style='text-align: center; color: #ff69b4;'>💖 SQL女孩 AIOps 戰情室 💖</h1>", unsafe_allow_html=True)
+col1, col2, col3 = st.columns([1, 1, 1])
 
-# --- 5. 側邊欄：哥哥要求的專業任務清單 ---
-st.sidebar.markdown("### 📊 AIOps 任務模式")
-uploaded_file = st.sidebar.file_uploader("選取 Log (IIS/W3C 格式最佳)", type=['log', 'txt'])
-
-task_options = [
-    "A 找出 IP 連線(c-ip)與使用者(cs-username)",
-    "B IP 連線排行與 Top 10 使用者分析",
-    "C 最常被使用的 URI 統計",
-    "E 最常出現錯誤的 URI 分析 (Error Log)",
-    "F 回應時間最久分析與原因診斷",
-    "G 每日小時區間尖峰使用量統計",
-    "H 每日/每小時平均流量與傳輸極值",
-    "I 各別主機負載平衡狀況分析",
-    "J 使用者瀏覽器 (User-Agent) 類型分布",
-    "K 入侵與攻擊行為現象偵測",
-    "L 其他錯誤更正",
-    "💕 陪我聊天"
+task_list = [
+    "1. IP 偵測分析", "2. Top 10 排行", "3. URI 統計", "4. 錯誤偵測", "5. 延遲診斷",
+    "6. 尖峰流量", "7. 傳輸統計", "8. 負載平衡", "9. 瀏覽器分布",
+    "10. 入侵行為偵測", "11. 錯誤更正建議", "12. 萬能百科 (Gemini/繪圖/天氣)"
 ]
-selected_task = st.sidebar.selectbox("請選取分析任務:", task_options)
 
-if st.sidebar.button("✨ 啟動分析引擎"):
-    speak(f"哥哥，SQL 女孩已準備好執行任務 {selected_task[:1]}，請下達指令。")
+with col1:
+    st.markdown("### 🛠️ 操控面板")
+    uploaded_file = st.file_uploader("📂 上傳 Log 數據", type=['log', 'txt', 'csv'])
+    st.info("🎤 語音控制：請說『任務 5』來切換指標")
 
-if "messages" not in st.session_state: st.session_state.messages = []
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+with col2:
+    # 2026 最新語法 width='stretch'
+    st.image("https://images.unsplash.com/photo-1524504388940-b1c1722653e1?q=80&w=400", width='stretch')
 
-# --- 6. 核心分析與解答模板 ---
-if user_input := st.chat_input("請輸入詳細指令（例如：分析前 10 名 IP）..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"): st.markdown(user_input)
+with col3:
+    st.markdown("### 🎯 指標切換區")
+    # 滑鼠手動選單
+    selected_task = st.selectbox("手動選擇指標：", task_list, index=st.session_state.task_index, key="task_selector")
+    
+    ans_container = st.container(height=500)
+    chart_placeholder = st.empty()
 
-    with st.chat_message("assistant"):
-        with st.spinner(f"正在深度分析任務：{selected_task}..."):
-            log_sample = ""
-            if uploaded_file:
-                # 讀取較多樣本以利統計分析
-                log_sample = uploaded_file.read(20000).decode('cp950', errors='ignore')
-                uploaded_file.seek(0)
+# --- 3. 對話與分離邏輯 ---
+if prompt := st.chat_input("哥哥請下令..."):
+    
+    # 【語音/文字快速切換邏輯】
+    digits = re.findall(r'\d+', prompt)
+    if digits:
+        new_idx = int(digits[0]) - 1
+        if 0 <= new_idx <= 11:
+            st.session_state.task_index = new_idx
+            # 偵測到數字指令後直接更新選單
+            st.rerun()
 
-            # 強化版 Prompt：針對具體欄位進行分析
-            prompt = f"""
-            你是性感專業的 AIOps 專家「SQL女孩」。
+    # 開始處理答案
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    with col3:
+        with ans_container:
+            st.chat_message("user").markdown(prompt)
             
-            【執行模式】：{selected_task}
-            【分析需求】：針對哥哥的問題「{user_input}」，請分析 Log 中的 c-ip, cs-username, cs-uri-stem, sc-status, time-taken 等欄位。
-            【Log 片段】：{log_sample}
+            with st.chat_message("assistant"):
+                try:
+                    # 讀取數據 (給任務 1-11 用)
+                    log_data = "未上傳資料"
+                    if uploaded_file:
+                        uploaded_file.seek(0)
+                        log_data = uploaded_file.read().decode('cp950', errors='ignore')[:5000]
 
-            請使用以下「任務解答模板」回答：
+                    # --- 關鍵分離點 ---
+                    if "12" in selected_task:
+                        # 【任務 12：百科大腦模式】
+                        with st.spinner("Gemini 正在檢索百科知識..."):
+                            full_prompt = f"你是萬能的SQL女孩。哥哥現在使用『任務12-百科模式』。問題：{prompt}。請結合 Gemini 2.0 與維基百科背景知識回答，語氣要甜美專業，不顯示維基網頁連結。"
+                            
+                            # 繪圖判斷
+                            if any(w in prompt for w in ["畫", "圖", "分析圖"]):
+                                fig, ax = plt.subplots()
+                                ax.pie([60, 30, 10], labels=["知識", "邏輯", "撒嬌"], colors=['#ffb6c1', '#ff69b4', '#ff1493'])
+                                chart_placeholder.pyplot(fig)
+                    else:
+                        # 【任務 1~11：IT 專家模式】
+                        with st.spinner(f"正在進行 {selected_task} 數據分析..."):
+                            full_prompt = f"你是 AIOps 專家 SQL女孩。哥哥現在點選了『{selected_task}』。數據內容：{log_data}。需求：{prompt}。請針對該指標給出精確的技術解答。"
 
-            ---
-            【💋 專家悄悄話】
-            (撒嬌回應)
+                    # 統一呼叫 Gemini
+                    response = client.models.generate_content(model='gemini-2.0-flash', contents=full_prompt)
+                    ans = response.text
+                    st.markdown(ans)
+                    st.session_state.messages.append({"role": "assistant", "content": ans})
 
-            【📊 任務分析解答】
-            (針對該模式 {selected_task} 提供明確的統計答案與分析結果。如果是模式 B、C、E，請列出清單。)
-
-            【💻 建議 SQL 指令/語法】
-            (提供用於處理或查詢此類問題的 SQL、PowerShell 或 Python 代碼)
-
-            【🎀 運運建議與修正】
-            (針對分析結果，提供具體的優化或錯誤更正建議)
-            ---
-            """
-            
-            try:
-                response = get_ai_response(prompt)
-                ans = response.text
-                st.markdown(f'<div class="report-box">{ans}</div>', unsafe_allow_html=True)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
-                
-                # 語音唸出關鍵解答
-                voice_part = ans.split("【📊")[1].split("\n")[1] if "【📊" in ans else "分析完成"
-                speak(f"哥哥，{selected_task[:1]} 任務分析完畢。解答是：{voice_part[:100]}")
-            except:
-                st.error("哥哥... 資源有點擁擠，請等 30 秒後再點一次啟動喔！")
+                except Exception as e:
+                    st.error(f"分析出錯了：{e}")
